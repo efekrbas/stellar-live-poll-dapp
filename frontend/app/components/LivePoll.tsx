@@ -86,7 +86,7 @@ export default function LivePoll() {
 
             const result = await server.simulateTransaction(tx);
 
-            if (rpc.Api.isSimulationSuccess(result)) {
+            if (rpc.Api.isSimulationSuccess(result) && result.result) {
                 const scval = result.result.retval;
                 const pollData = scValToNative(scval);
                 console.log("Poll Data Received:", pollData);
@@ -132,14 +132,13 @@ export default function LivePoll() {
             const preparedTx = await server.prepareTransaction(tx);
 
             const signedTx = await signTransaction(preparedTx.toXDR(), {
-                network: "TESTNET",
                 networkPassphrase: "Test SDF Network ; September 2015"
             });
 
             if (signedTx) {
                 console.log("Signed Tx from Freighter:", signedTx);
                 // Handle potential object response or string
-                let xdrString = signedTx;
+                let xdrString: string = typeof signedTx === 'string' ? signedTx : '';
                 if (typeof signedTx === 'object' && 'signedTxXdr' in signedTx) {
                     xdrString = (signedTx as any).signedTxXdr;
                 }
