@@ -56,7 +56,11 @@ This project demonstrates a full-stack dApp on Soroban. Users can connect their 
   - `app/components/LivePoll.tsx`: Main voting component with multi-wallet support
 
 ## Screenshots
+### Wallet Selection
 ![Wallet Options](screenshot2.png)
+
+### Live Poll View
+![Live Poll View](screenshot.png)
 
 ## Submission Details
 - **Deployed Contract Address**: `CD3FMPVW6CAOJTT7EQTC6U46FXMH5QIWLNA7MA4USTBIB7HM2PNMOWTG`
