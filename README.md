@@ -65,5 +65,4 @@ This project demonstrates a full-stack dApp on Soroban. Users can connect their 
 ## Submission Details
 - **Deployed Contract Address**: `CD3FMPVW6CAOJTT7EQTC6U46FXMH5QIWLNA7MA4USTBIB7HM2PNMOWTG`
 - **Transaction Hash**: [79ac7cecbb179fa4e50a3fdf1db57e079ca4098910ead3900da47b3d4de728fd](https://stellar.expert/explorer/testnet/tx/79ac7cecbb179fa4e50a3fdf1db57e079ca4098910ead3900da47b3d4de728fd)
-- **Repository Link**: [https://github.com/efekrbas/stellar-live-poll-dapp](https://github.com/efekrbas/stellar-live-poll-dapp)
 - **Live Demo**: [https://stellar-live-poll-dapp.vercel.app/](https://stellar-live-poll-dapp.vercel.app/)
