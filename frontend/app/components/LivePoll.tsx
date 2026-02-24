@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     isConnected,
     requestAccess,
     signTransaction,
     setAllowed
 } from '@stellar/freighter-api';
+import { xBullWalletConnect } from '@creit.tech/xbull-wallet-connect';
 import {
     Contract,
     Networks,
@@ -25,50 +26,111 @@ import {
 const CONTRACT_ID = 'CD3FMPVW6CAOJTT7EQTC6U46FXMH5QIWLNA7MA4USTBIB7HM2PNMOWTG';
 const RPC_URL = 'https://soroban-testnet.stellar.org';
 
+type WalletType = 'freighter' | 'xbull' | null;
+
 export default function LivePoll() {
+    const [selectedWallet, setSelectedWallet] = useState<WalletType>(null);
     const [walletConnected, setWalletConnected] = useState(false);
     const [userAddress, setUserAddress] = useState<string | null>(null);
     const [poll, setPoll] = useState<any>(null);
     const [txStatus, setTxStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
     const [txHash, setTxHash] = useState<string | null>(null);
-
     const [error, setError] = useState<string | null>(null);
+    const xBullRef = useRef<xBullWalletConnect | null>(null);
 
     useEffect(() => {
-        checkConnection();
         fetchPoll();
-        // Real-time update simulation (polling every 5s)
-        const interval = setInterval(fetchPoll, 5000);
-        return () => clearInterval(interval);
+        // Fallback polling for general updates (every 10s)
+        const interval = setInterval(fetchPoll, 10000);
+
+        // Real-time Event Listening (every 3s)
+        const eventInterval = setInterval(fetchEvents, 3000);
+
+        return () => {
+            clearInterval(interval);
+            clearInterval(eventInterval);
+        };
     }, []);
 
-    const checkConnection = async () => {
+    const fetchEvents = async () => {
         try {
-            const connected = await isConnected();
-            if (connected) {
-                const { address } = await requestAccess(); // Using requestAccess to get address if allowed
-                if (address) {
-                    setAllowed();
-                    setWalletConnected(true);
-                    setUserAddress(address);
-                }
+            const server = new rpc.Server(RPC_URL);
+            // Get events from a recent ledger
+            const latestLedger = await server.getLatestLedger();
+            const startLedger = latestLedger.sequence - 100;
+
+            const response = await server.getEvents({
+                startLedger,
+                filters: [
+                    {
+                        type: 'contract',
+                        contractIds: [CONTRACT_ID],
+                        topics: [[xdr.ScVal.scvSymbol('poll').toXDR('base64'), '*']]
+                    }
+                ],
+                limit: 10
+            });
+
+            if (response.events && response.events.length > 0) {
+                console.log("New Soroban events detected:", response.events.length);
+                fetchPoll(); // Refresh poll data based on event
             }
         } catch (e) {
-            console.error("Connection check failed", e);
+            console.warn("Error fetching events:", e);
         }
     };
 
-    const connectWallet = async () => {
+    const connectFreighter = async () => {
         try {
+            const connected = await isConnected();
+            if (!connected) {
+                setError("Freighter wallet is not installed. Please install the Freighter browser extension.");
+                return;
+            }
             const { address } = await requestAccess();
             if (address) {
                 setAllowed();
                 setWalletConnected(true);
                 setUserAddress(address);
+                setSelectedWallet('freighter');
+                setError(null);
             }
         } catch (e) {
-            alert("Please install Freighter wallet!");
+            setError("Failed to connect Freighter wallet. Please make sure it is installed and unlocked.");
         }
+    };
+
+    const connectXBull = async () => {
+        try {
+            const bridge = new xBullWalletConnect();
+            xBullRef.current = bridge;
+            const publicKey = await bridge.connect();
+            if (publicKey) {
+                setWalletConnected(true);
+                setUserAddress(publicKey);
+                setSelectedWallet('xbull');
+                setError(null);
+            }
+        } catch (e) {
+            if (xBullRef.current) {
+                xBullRef.current.closeConnections();
+                xBullRef.current = null;
+            }
+            setError("Failed to connect xBull wallet. Please make sure it is installed and unlocked.");
+        }
+    };
+
+    const disconnectWallet = () => {
+        if (xBullRef.current) {
+            xBullRef.current.closeConnections();
+            xBullRef.current = null;
+        }
+        setWalletConnected(false);
+        setUserAddress(null);
+        setSelectedWallet(null);
+        setTxStatus('idle');
+        setTxHash(null);
+        setError(null);
     };
 
     const fetchPoll = async () => {
@@ -110,7 +172,30 @@ export default function LivePoll() {
         try {
             const server = new rpc.Server(RPC_URL);
             const horizonServer = new Horizon.Server("https://horizon-testnet.stellar.org");
-            const account = await horizonServer.loadAccount(userAddress);
+
+            let account;
+            try {
+                account = await horizonServer.loadAccount(userAddress);
+            } catch (loadErr: any) {
+                // Account not found on testnet — try to fund via Friendbot
+                if (loadErr?.response?.status === 404 || loadErr?.message?.includes('Not Found')) {
+                    setError("Account not found on testnet. Funding via Friendbot...");
+                    try {
+                        await fetch(`https://friendbot.stellar.org?addr=${encodeURIComponent(userAddress)}`);
+                        // Wait a moment for the account to be created
+                        await new Promise(r => setTimeout(r, 2000));
+                        account = await horizonServer.loadAccount(userAddress);
+                        setError(null);
+                    } catch (fundErr) {
+                        console.error("Friendbot funding failed:", fundErr);
+                        setTxStatus('error');
+                        setError("Your account does not exist on the Stellar testnet and automatic funding failed. Please fund your account manually at https://friendbot.stellar.org");
+                        return;
+                    }
+                } else {
+                    throw loadErr;
+                }
+            }
 
             const contract = new Contract(CONTRACT_ID!);
             // Convert arguments to ScVal
@@ -131,56 +216,70 @@ export default function LivePoll() {
             // IMPORTANT: Simulate and Prepare the transaction (Calculate resources)
             const preparedTx = await server.prepareTransaction(tx);
 
-            const signedTx = await signTransaction(preparedTx.toXDR(), {
-                networkPassphrase: "Test SDF Network ; September 2015"
-            });
+            // Sign with the appropriate wallet
+            let xdrString: string = '';
 
-            if (signedTx) {
-                console.log("Signed Tx from Freighter:", signedTx);
-                // Handle potential object response or string
-                let xdrString: string = typeof signedTx === 'string' ? signedTx : '';
-                if (typeof signedTx === 'object' && 'signedTxXdr' in signedTx) {
-                    xdrString = (signedTx as any).signedTxXdr;
+            if (selectedWallet === 'freighter') {
+                const signedTx = await signTransaction(preparedTx.toXDR(), {
+                    networkPassphrase: "Test SDF Network ; September 2015"
+                });
+
+                if (signedTx) {
+                    console.log("Signed Tx from Freighter:", signedTx);
+                    xdrString = typeof signedTx === 'string' ? signedTx : '';
+                    if (typeof signedTx === 'object' && 'signedTxXdr' in signedTx) {
+                        xdrString = (signedTx as any).signedTxXdr;
+                    }
                 }
+            } else if (selectedWallet === 'xbull' && xBullRef.current) {
+                const signedXdr = await xBullRef.current.sign({
+                    xdr: preparedTx.toXDR(),
+                    network: "Test SDF Network ; September 2015"
+                });
+                xdrString = signedXdr;
+            }
 
-                const signedTransaction = TransactionBuilder.fromXDR(xdrString, "Test SDF Network ; September 2015");
-                const sentTx = await server.sendTransaction(signedTransaction);
+            if (!xdrString) {
+                setTxStatus('error');
+                setError("Transaction signing was cancelled or failed.");
+                return;
+            }
 
-                if (sentTx.status !== 'PENDING') {
+            const signedTransaction = TransactionBuilder.fromXDR(xdrString, "Test SDF Network ; September 2015");
+            const sentTx = await server.sendTransaction(signedTransaction);
+
+            if (sentTx.status !== 'PENDING') {
+                setTxStatus('error');
+                console.error("Tx failed immediately:", JSON.stringify(sentTx, null, 2));
+                return;
+            }
+
+            // Poll for status
+            let statusResult = null;
+            const pollInterval = 1000;
+            const maxRetries = 10;
+            let retries = 0;
+
+            while (retries < maxRetries) {
+                await new Promise(r => setTimeout(r, pollInterval));
+                statusResult = await server.getTransaction(sentTx.hash);
+                if (statusResult.status === 'SUCCESS') {
+                    setTxStatus('success');
+                    setTxHash(sentTx.hash);
+                    fetchPoll(); // Update poll immediately
+                    return;
+                } else if (statusResult.status === 'FAILED') {
                     setTxStatus('error');
-                    console.error("Tx failed immediately:", JSON.stringify(sentTx, null, 2));
                     return;
                 }
-
-                // Poll for status
-                let statusResult = null;
-                const pollInterval = 1000;
-                const maxRetries = 10;
-                let retries = 0;
-
-                while (retries < maxRetries) {
-                    await new Promise(r => setTimeout(r, pollInterval));
-                    statusResult = await server.getTransaction(sentTx.hash);
-                    if (statusResult.status === 'SUCCESS') {
-                        setTxStatus('success');
-                        setTxHash(sentTx.hash);
-                        fetchPoll(); // Update poll immediately
-                        return;
-                    } else if (statusResult.status === 'FAILED') {
-                        setTxStatus('error');
-                        return;
-                    }
-                    retries++;
-                }
-                // If we got here, we tailored out or it's still pending
-                setTxHash(sentTx.hash); // Show hash anyway
+                retries++;
             }
+            // If we got here, we timed out or it's still pending
+            setTxHash(sentTx.hash); // Show hash anyway
 
         } catch (e: any) {
             const errStr = e.toString() + (e.message || '');
             if (errStr.includes('Error(Contract, #3)') || errStr.includes('HostError')) {
-                // Determine if it's the specific "Already Voted" error (#3)
-                // We don't console.error here to keep console clean for expected logic
                 console.warn("User tried to vote again (Contract Error #3)");
                 setTxStatus('error');
                 setError("You have already voted! (Contract Error #3)");
@@ -188,7 +287,6 @@ export default function LivePoll() {
                 setTxStatus('error');
                 setError("Poll has ended! (Contract Error #2)");
             } else {
-                // Log actual unexpected errors
                 console.error(e);
                 setTxStatus('error');
                 setError("Transaction failed. Check console for details.");
@@ -196,32 +294,95 @@ export default function LivePoll() {
         }
     };
 
-    return (
-        <div className="p-6 max-w-2xl mx-auto bg-slate-800 text-white rounded-xl shadow-lg">
-            <h1 className="text-3xl font-bold mb-6">Stellar Live Poll</h1>
+    // ─── Wallet Selection Screen ───
+    if (!walletConnected) {
+        return (
+            <div className="p-8 max-w-2xl mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
+                <h1 className="text-3xl font-bold mb-2 text-center">Stellar Live Poll</h1>
+                <p className="text-slate-400 text-center mb-8">Connect your wallet to start voting</p>
 
-            {/* Wallet Connection */}
-            <div className="mb-6">
-                {!walletConnected ? (
-                    <button
-                        onClick={connectWallet}
-                        className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg transition"
-                    >
-                        Connect Freighter
-                    </button>
-                ) : (
-                    <div className="flex items-center gap-2">
-                        <span className="text-green-400">● Connected:</span>
-                        <span className="text-xs font-mono bg-slate-900 p-1 rounded">
-                            {userAddress?.slice(0, 5)}...{userAddress?.slice(-5)}
-                        </span>
+                {error && (
+                    <div className="p-4 mb-6 bg-red-900/50 border border-red-500 rounded-lg text-red-200 text-sm">
+                        {error}
                     </div>
                 )}
+
+                <div className="space-y-4">
+                    <h2 className="text-lg font-semibold text-purple-300 mb-3">Choose a Wallet</h2>
+
+                    {/* Freighter Wallet Option */}
+                    <button
+                        onClick={connectFreighter}
+                        className="w-full flex items-center gap-4 bg-slate-700 hover:bg-slate-600 p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-purple-500 group"
+                    >
+                        <div className="w-12 h-12 bg-purple-600 rounded-xl flex items-center justify-center text-2xl shrink-0">
+                            🚀
+                        </div>
+                        <div className="text-left">
+                            <div className="font-bold text-lg group-hover:text-purple-300 transition-colors">Freighter</div>
+                            <div className="text-slate-400 text-sm">Stellar&apos;s most popular browser wallet</div>
+                        </div>
+                        <div className="ml-auto text-slate-500 group-hover:text-purple-400 transition-colors">
+                            →
+                        </div>
+                    </button>
+
+                    {/* xBull Wallet Option */}
+                    <button
+                        onClick={connectXBull}
+                        className="w-full flex items-center gap-4 bg-slate-700 hover:bg-slate-600 p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-blue-500 group"
+                    >
+                        <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-2xl shrink-0">
+                            🐂
+                        </div>
+                        <div className="text-left">
+                            <div className="font-bold text-lg group-hover:text-blue-300 transition-colors">xBull</div>
+                            <div className="text-slate-400 text-sm">Advanced Stellar wallet with DeFi features</div>
+                        </div>
+                        <div className="ml-auto text-slate-500 group-hover:text-blue-400 transition-colors">
+                            →
+                        </div>
+                    </button>
+                </div>
+
+                <p className="text-slate-500 text-xs text-center mt-6">
+                    Don&apos;t have a wallet? Install{' '}
+                    <a href="https://www.freighter.app/" target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-300 underline">Freighter</a>
+                    {' '}or{' '}
+                    <a href="https://xbull.app/" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline">xBull</a>
+                    {' '}to get started.
+                </p>
+            </div>
+        );
+    }
+
+    // ─── Connected / Poll View ───
+    return (
+        <div className="p-8 max-w-2xl mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+                <h1 className="text-3xl font-bold">Stellar Live Poll</h1>
+                <button
+                    onClick={disconnectWallet}
+                    className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition text-slate-300 hover:text-white"
+                >
+                    Disconnect
+                </button>
+            </div>
+
+            {/* Wallet Info */}
+            <div className="mb-6 flex items-center gap-2">
+                <span className="text-green-400">● Connected</span>
+                <span className="text-xs px-2 py-0.5 bg-slate-700 rounded-full text-slate-300 uppercase tracking-wider font-semibold">
+                    {selectedWallet}
+                </span>
+                <span className="text-xs font-mono bg-slate-900 p-1 rounded">
+                    {userAddress?.slice(0, 5)}...{userAddress?.slice(-5)}
+                </span>
             </div>
 
             {/* Error Message */}
             {error && (
-                <div className="p-4 mb-4 bg-red-900/50 border border-red-500 rounded text-red-200">
+                <div className="p-4 mb-4 bg-red-900/50 border border-red-500 rounded-lg text-red-200">
                     {error}
                 </div>
             )}
@@ -238,8 +399,6 @@ export default function LivePoll() {
                                 const found = poll.votes.find((v: any) => v[0] === idx);
                                 if (found) votes = found[1];
                             } else if (poll.votes && typeof poll.votes === 'object') {
-                                // Handle if votes is a plain object { "0": 1, "1": 5 }
-                                // Keys effectively are the indices
                                 if (idx in poll.votes) {
                                     votes = poll.votes[idx];
                                 }
@@ -272,7 +431,7 @@ export default function LivePoll() {
                         'border-red-500 bg-red-900/20 text-red-200'
                     }`}>
                     <div className="font-bold uppercase tracking-wider text-sm mb-1">
-                        Status: {txStatus}
+                        Status: {txStatus === 'pending' ? '⏳ Pending...' : txStatus === 'success' ? '✅ Success' : '❌ Error'}
                     </div>
                     {txHash && (
                         <div className="text-xs break-all">
