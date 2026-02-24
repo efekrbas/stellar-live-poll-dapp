@@ -297,7 +297,7 @@ export default function LivePoll() {
     // ─── Wallet Selection Screen ───
     if (!walletConnected) {
         return (
-            <div className="p-8 max-w-2xl mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
+            <div className="p-4 sm:p-8 max-w-2xl w-full mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
                 <h1 className="text-3xl font-bold mb-2 text-center">Stellar Live Poll</h1>
                 <p className="text-slate-400 text-center mb-8">Connect your wallet to start voting</p>
 
@@ -313,7 +313,7 @@ export default function LivePoll() {
                     {/* Freighter Wallet Option */}
                     <button
                         onClick={connectFreighter}
-                        className="w-full flex items-center gap-4 bg-slate-700 hover:bg-slate-600 p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-purple-500 group"
+                        className="w-full flex items-center gap-3 sm:gap-4 bg-slate-700 hover:bg-slate-600 p-4 sm:p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-purple-500 group"
                     >
                         <div className="w-12 h-12 bg-purple-600 rounded-xl flex items-center justify-center text-2xl shrink-0">
                             🚀
@@ -330,7 +330,7 @@ export default function LivePoll() {
                     {/* xBull Wallet Option */}
                     <button
                         onClick={connectXBull}
-                        className="w-full flex items-center gap-4 bg-slate-700 hover:bg-slate-600 p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-blue-500 group"
+                        className="w-full flex items-center gap-3 sm:gap-4 bg-slate-700 hover:bg-slate-600 p-4 sm:p-5 rounded-xl transition-all duration-200 border border-slate-600 hover:border-blue-500 group"
                     >
                         <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-2xl shrink-0">
                             🐂
@@ -358,7 +358,7 @@ export default function LivePoll() {
 
     // ─── Connected / Poll View ───
     return (
-        <div className="p-8 max-w-2xl mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
+        <div className="p-4 sm:p-8 max-w-2xl w-full mx-auto bg-slate-800 text-white rounded-2xl shadow-2xl">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-3xl font-bold">Stellar Live Poll</h1>
                 <button
