@@ -37,6 +37,7 @@ export default function LivePoll() {
     const [txHash, setTxHash] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const xBullRef = useRef<xBullWalletConnect | null>(null);
+    const latestLedgerRef = useRef<number>(0);
 
     useEffect(() => {
         fetchPoll();
@@ -57,7 +58,14 @@ export default function LivePoll() {
             const server = new rpc.Server(RPC_URL);
             // Get events from a recent ledger
             const latestLedger = await server.getLatestLedger();
-            const startLedger = latestLedger.sequence - 100;
+            const currentLedger = latestLedger.sequence;
+            
+            let startLedger = latestLedgerRef.current;
+            if (startLedger === 0) {
+                startLedger = currentLedger - 100;
+            }
+
+            if (startLedger > currentLedger) return;
 
             const response = await server.getEvents({
                 startLedger,
@@ -75,6 +83,7 @@ export default function LivePoll() {
                 console.log("New Soroban events detected:", response.events.length);
                 fetchPoll(); // Refresh poll data based on event
             }
+            latestLedgerRef.current = currentLedger + 1;
         } catch (e) {
             console.warn("Error fetching events:", e);
         }
@@ -155,7 +164,7 @@ export default function LivePoll() {
                 setPoll(pollData);
                 setError(null);
             } else {
-                setError("Poll data could not be fetched. Has the poll been initialized?");
+                setError("Poll data could not be fetched. Has the poll been initialized? (Error #1 - Not Initialized)");
                 console.warn("Simulation failed:", result);
             }
         } catch (e) {
@@ -279,7 +288,11 @@ export default function LivePoll() {
 
         } catch (e: any) {
             const errStr = e.toString() + (e.message || '');
-            if (errStr.includes('Error(Contract, #3)') || errStr.includes('HostError')) {
+            if (errStr.includes('Error(Contract, #1)')) {
+                console.warn("Poll not initialized (Contract Error #1)");
+                setTxStatus('error');
+                setError("The poll has not been initialized yet! (Contract Error #1)");
+            } else if (errStr.includes('Error(Contract, #3)') || errStr.includes('HostError')) {
                 console.warn("User tried to vote again (Contract Error #3)");
                 setTxStatus('error');
                 setError("You have already voted! (Contract Error #3)");
